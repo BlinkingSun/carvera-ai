@@ -79,6 +79,8 @@ class Sim:
     def status(self) -> str:
         m, w = self.mpos, self.wpos()
         st = "Alarm" if self.alarm else ("Hold" if self.hold else self.state)
+        if st == "Idle" and self.rpm > 0:
+            st = "Run"            # fw 1.0.3 reports Run whenever the spindle is on, even with no motion (2026-11-24)
         return (f"<{st}|MPos:{m[0]:.4f},{m[1]:.4f},{m[2]:.4f},0.0000,0.0272"
                 f"|WPos:{w[0]:.4f},{w[1]:.4f},{w[2]:.4f},-90.0000,0.0272|F:0.0,1000.0,100.0"
                 f"|S:{self.rpm:.1f},{self.rpm_target:.1f},100.0,1,28.8|T:{self.tool},{self.tlo:.3f}|W:3.65"

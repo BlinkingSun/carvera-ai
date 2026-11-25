@@ -50,6 +50,11 @@ The server listens on localhost only.
 | `POST /api/vacuum` · `GET /api/vacuum` | `{on, power?}` | Onboard vacuum: `M801 S<1-100>` / `M802`, then read back from `diagnose` (`confirmed`). Allowed while a program runs; the firmware switches at once and the cut does not pause. Default power from `vacuum_power` (80). 400 in Alarm, 409 while a long exchange holds the line. |
 | `POST /api/spindle` · `GET /api/spindle` | `{on, rpm?}` | Spindle: `M3 S<rpm>` / `M5`, confirmed from `diagnose`. Range 1000–20000, default `spindle_rpm` (10000). Start refused with the probe or an empty spindle. Both directions refused in Alarm and while a program plays (the program owns the spindle). `GET` returns `{on, target, rpm, can_start, why_not, range, default_rpm}`. |
 
+**Manual moves with the spindle on.** The firmware reports state `Run` whenever the spindle is on, even with
+nothing moving. Carvera Control treats "Run with the spindle on, no program playing, no tool change" as
+ready: `jog`, `move`, `goto`, `zero` and `gcode` jobs run while it turns. `home`, `tool`, `probe/z`,
+`program/upload` and `program/run` refuse with "the spindle is running; stop it before …".
+
 ## Programs
 
 | Endpoint | Body | Notes |

@@ -153,7 +153,7 @@ setup's dowel and anchor rules), and read [docs/SAFETY.md](docs/SAFETY.md).
   machine and work coordinates, tool, TLO and G54. Go to a point at the current height or after lifting.
 - **Header**: connection, onboard **vacuum** (power %, On/Off, confirmed by the machine), **spindle**
   (rpm, Start with confirmation, Stop; refused with the probe or an empty spindle and while a program
-  runs), Hold, Resume, Unlock and STOP.
+  runs; you can keep jogging while it turns, for manual control), Hold, Resume, Unlock and STOP.
 - **Activity and machine messages**: everything you, the agent and the system did, and everything the
   machine printed.
 

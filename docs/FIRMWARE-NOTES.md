@@ -21,6 +21,8 @@ The simulator in `sim/carvera_sim.py` reproduces these behaviours.
   battery. `O:` the leveling grid's max delta (only while a grid is held). `A:` the ATC state (present
   while a tool change runs). `P:` playback progress.
 - There is **no vacuum field** in the status. Use `diagnose`.
+- **The state is `Run` whenever the spindle is on**, even with nothing moving. A controller that waits for
+  `Idle` before or after every move will refuse or stall manual jogs while the spindle turns.
 
 ## `diagnose`
 

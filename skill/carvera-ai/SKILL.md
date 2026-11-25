@@ -57,6 +57,8 @@ carvera-api POST /api/home
 carvera-api POST /api/stop                        # feed hold + abort; then: carvera-api POST /api/unlock
 carvera-api POST /api/vacuum '{"on":true,"power":80}'    # onboard vacuum; works mid-program; '{"on":false}' = off
 carvera-api POST /api/spindle '{"on":true,"rpm":12000}'  # spindle M3/M5; ONLY when the user asks
+# While the spindle turns (the firmware reports state Run), jog / move / goto / set zero / raw gcode still work
+# (manual control); home, tool change, probe, upload and program runs refuse until it is stopped.
 carvera-api POST /api/disconnect                  # hand the machine back to CarveraController
 ```
 

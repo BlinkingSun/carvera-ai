@@ -336,8 +336,24 @@ class E2E(unittest.TestCase):
         time.sleep(0.4)
         self.assertGreater(self.status()["status"]["spindle_rpm"], 1000)
         self.assertEqual(self.status()["spindle"]["on"], True)
-        # the tool change refuses while it turns
+        # the firmware reports Run while the spindle turns, yet manual moves must work (USER 2026-11-24)
+        self.assertEqual(self.status()["status"]["state"], "Run")
+        x0 = self.status()["status"]["mpos"]["x"]
+        t0 = time.time()
+        j = self.call("POST", "/api/jog", {"axis": "x", "distance": -2, "feed": 1500})
+        self.assertEqual(j["state"], "done", j)
+        self.assertLess(time.time() - t0, 5, "jog stalled waiting for Idle")
+        self.assertAlmostEqual(self.status()["status"]["mpos"]["x"], x0 - 2, places=3)
+        mv = self.call("POST", "/api/move", {"x": x0, "system": "machine", "feed": 1500})
+        self.assertEqual(mv["state"], "done", mv)
+        self.assertAlmostEqual(self.status()["status"]["mpos"]["x"], x0, places=3)
+        self.assertEqual(self.status()["spindle"]["on"], True)     # still turning
+        # home, the tool change and probing still need the spindle stopped
+        e = self.call("POST", "/api/home", {}, expect=422)
+        self.assertIn("spindle is running", e["error"])
         e = self.call("POST", "/api/tool", {"tool": 4}, expect=422)
+        self.assertIn("spindle", e["error"])
+        e = self.call("POST", "/api/probe/z", {"max_distance": 5}, expect=422)
         self.assertIn("spindle", e["error"])
         r = self.call("POST", "/api/spindle", {"on": False}, wait=False)
         self.assertEqual(r["command"], "M5")

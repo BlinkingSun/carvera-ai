@@ -16,6 +16,7 @@ Treat every motion as something that can break a tool, a part, a fixture or a fi
 | Jogs and moves outside machine travel (X −371…0, Y −250…0, Z −135…0) are refused | `machine.py` |
 | Raw G-code may not start the spindle (`M3/M4`) unless `allow_spindle`, and may not change tools | `/api/gcode` |
 | Tool changes are refused while the spindle turns | `/api/tool` |
+| While the spindle turns, only manual moves run (jog, move, go to point, set zero, raw G-code); home, tool change, probing, upload and program runs refuse | job start |
 | The spindle switch refuses to start with the probe or an empty spindle, in Alarm, or while a program runs | `/api/spindle` |
 | Probing is refused below 3.5 V probe battery, or if the probe already reads triggered | `/api/probe/z` |
 | A program runs only if the machine's copy has the same MD5 as the local file | `/api/program/run` |

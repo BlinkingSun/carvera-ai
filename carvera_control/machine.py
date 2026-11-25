@@ -39,6 +39,9 @@ PROBE_SLOT_DEFAULT = {"x": -3.403, "y": -25.143, "z": -112.5, "approach": 15.0,
 STOW_EXTRA_MAX = 3.0        # mm; refuse anything deeper
 STOW_EXTRA_FEED = 100.0     # mm/min for the extra plunge
 SPINDLE_RPM = (1000, 20000)  # UI spindle range (S20000 reads about 16-17k rpm on this spindle)
+# Jobs allowed while the spindle turns (manual control, USER 2026-11-24: "allow for jogging while the spindle
+# runs"). Home, tool change, probing, upload and program runs still need the spindle stopped.
+SPINDLE_OK_JOBS = {"jog", "move", "goto_point", "set_work_zero", "gcode"}
 MAX_FEED = {"x": 3000.0, "y": 3000.0, "z": 2000.0}
 AXES = ("x", "y", "z")
 TOOL_NAMES = {0: "Probe", -1: "Empty", 8888: "Laser"}
@@ -469,12 +472,23 @@ class Machine:
                 self._cv.wait(min(rem, 0.5))
             return dict(self.status)
 
+    def _spindle_run(self, st: dict) -> bool:
+        """fw 1.0.3 reports state Run whenever the spindle is on, even with nothing moving (seen 2026-11-24:
+        every jog after M3 failed 'machine is Run, not Idle'). True when that is the only reason for Run:
+        the spindle is on, no program is playing and no tool change is running."""
+        if st.get("state") != "Run" or st.get("progress") or st.get("atc_state") is not None:
+            return False
+        fresh = self.diag_time and time.time() - self.diag_time < self.DIAG_FRESH
+        sp = self.diag.get("spindle") if fresh else None
+        return (st.get("spindle_rpm") or 0) > 50 or bool(sp and sp.get("on"))
+
     def _wait_motion_done(self, timeout: float = 120.0) -> dict:
-        """M400 holds its ok until the planner queue is empty; then confirm Idle."""
+        """M400 holds its ok until the planner queue is empty; then confirm Idle (or Run only because the
+        spindle is on: manual moves with the spindle running)."""
         self._cmd("M400", timeout=timeout)
         st = self._wait_fresh_status(2)
         deadline = time.time() + 10
-        while st.get("state") != "Idle" and time.time() < deadline:
+        while st.get("state") != "Idle" and not self._spindle_run(st) and time.time() < deadline:
             if st.get("state", "").startswith("Alarm"):
                 raise MachineError(f"machine in {st['state']}")
             st = self._wait_fresh_status(1)
@@ -527,7 +541,10 @@ class Machine:
             try:
                 st = self._wait_fresh_status(1)
                 if kind not in ("unlock",) and st.get("state") != "Idle":
-                    raise MachineError(f"machine is {st.get('state')}, not Idle")
+                    if not self._spindle_run(st):
+                        raise MachineError(f"machine is {st.get('state')}, not Idle")
+                    if kind not in SPINDLE_OK_JOBS:      # manual moves only while the spindle turns
+                        raise MachineError(f"the spindle is running; stop it before {kind.replace('_', ' ')}")
                 job["result"] = fn(job, **params)
                 job["state"] = "done"
             except Exception as e:  # noqa: BLE001 - report every failure to the caller
