@@ -380,6 +380,111 @@ class E2E(unittest.TestCase):
         self.call("POST", "/api/disconnect", {}, wait=False)
         self.assertIsNone(self.status()["spindle"]["on"])
 
+    def raw(self, base, method, path, body=None, headers=None):
+        """HTTP call that returns (code, json or text, response headers) without asserting."""
+        h = {"Content-Type": "application/json", "X-Source": "ui"} | (headers or {})
+        req = urllib.request.Request(base + path, method=method, headers=h,
+                                     data=json.dumps(body).encode() if body is not None else None)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                code, data, hdrs = r.status, r.read(), r.headers
+        except urllib.error.HTTPError as e:
+            code, data, hdrs = e.code, e.read(), e.headers
+        try:
+            return code, json.loads(data), hdrs
+        except ValueError:
+            return code, data.decode(errors="replace"), hdrs
+
+    def test_05_phone_access(self):
+        """Phone/tablet access (2026-11-25): LAN listener, pairing code, cookie, allowlist, localhost guard."""
+        app = self.app
+        app.remote.port = 0                       # any free port for the test
+        cfg_path = os.path.join(app.data_dir, "config.json")
+        if not self.status()["connected"]:
+            self.call("POST", "/api/connect", {}, wait=False)
+        # the 127.0.0.1 listener refuses other host names (DNS rebinding) and cross-site POSTs
+        code, out, _ = self.raw(self.base, "GET", "/api/status", headers={"Host": "evil.example:17916"})
+        self.assertEqual(code, 403, out)
+        code, out, _ = self.raw(self.base, "POST", "/api/hold", {}, headers={"Origin": "http://evil.example"})
+        self.assertEqual(code, 403, out)
+        self.assertIn("cross-site", out["error"])
+        code, out, _ = self.raw(self.base, "POST", "/api/hold", {}, headers={"Origin": self.base})
+        self.assertEqual(code, 200, out)          # same origin is fine
+        self.call("POST", "/api/resume", {}, wait=False)
+        self.assertEqual(self.status()["client"], "local")
+
+        v = self.call("POST", "/api/remote", {"on": True}, wait=False)
+        self.assertTrue(v["on"])
+        self.assertRegex(v["code"], r"^\d{6}$")
+        self.assertTrue(json.load(open(cfg_path))["remote"])
+        rb = f"http://127.0.0.1:{v['port']}"
+        # the page loads unpaired (it shows the pairing screen); the API does not
+        code, html, _ = self.raw(rb, "GET", "/")
+        self.assertEqual(code, 200)
+        self.assertIn("pairForm", html)
+        code, out, _ = self.raw(rb, "GET", "/api/status")
+        self.assertEqual(code, 401, out)
+        self.assertTrue(out["pair"])
+        # a wrong code is refused; 5 wrong codes change the code
+        code, out, _ = self.raw(rb, "POST", "/api/pair", {"code": "000000" if v["code"] != "000000" else "111111"})
+        self.assertEqual(code, 401, out)
+        first = v["code"]
+        for _ in range(4):
+            self.raw(rb, "POST", "/api/pair", {"code": "abc"})
+        v = self.call("GET", "/api/remote")
+        self.assertNotEqual(v["code"], first, "code must change after 5 wrong tries")
+        code, out, _ = self.raw(rb, "POST", "/api/pair", {"code": first})
+        self.assertEqual(code, 401, "the old code must be dead")
+        # right code -> cookie; the code changes after pairing
+        code, out, hdrs = self.raw(rb, "POST", "/api/pair", {"code": v["code"][:3] + " " + v["code"][3:], "name": "iPhone"})
+        self.assertEqual(code, 200, out)
+        set_cookie = hdrs["Set-Cookie"]
+        self.assertIn("HttpOnly", set_cookie)
+        self.assertIn("SameSite=Strict", set_cookie)
+        cookie = {"Cookie": set_cookie.split(";")[0]}
+        self.assertNotEqual(self.call("GET", "/api/remote")["code"], v["code"])
+        devs = self.call("GET", "/api/remote")["devices"]
+        self.assertEqual([d["name"] for d in devs], ["iPhone"])
+        self.assertNotIn("hash", devs[0])
+        stored = json.load(open(os.path.join(app.data_dir, "devices.json")))["devices"][0]
+        self.assertNotIn(cookie["Cookie"].split("=", 1)[1], json.dumps(stored), "token must not be stored")
+        # paired: the UI's controls work and are logged as 'remote'
+        code, st, _ = self.raw(rb, "GET", "/api/status", headers=cookie)
+        self.assertEqual(code, 200)
+        self.assertEqual(st["client"], "remote")
+        self.assertNotIn("code", json.dumps(st.get("remote")))
+        if not st["connected"]:
+            self.raw(rb, "POST", "/api/connect", {}, headers=cookie)
+        if self.status()["status"]["state"] == "Alarm":
+            self.raw(rb, "POST", "/api/unlock?wait=1", {}, headers=cookie)
+        x0 = self.status()["status"]["mpos"]["x"]
+        code, j, _ = self.raw(rb, "POST", "/api/jog?wait=1", {"axis": "x", "distance": -1, "feed": 1000}, headers=cookie)
+        self.assertEqual(code, 200, j)
+        self.assertEqual(j["source"], "remote")
+        self.assertAlmostEqual(self.status()["status"]["mpos"]["x"], x0 - 1, places=3)
+        acts = self.call("GET", "/api/activity?limit=10")["items"]
+        self.assertTrue(any(a["source"] == "remote" and a["action"] == "pair" for a in acts))
+        # Mac-only endpoints stay on the Mac, even when paired
+        for method, path, body in [("POST", "/api/gcode", {"lines": ["G0 X-5"]}), ("POST", "/api/remote", {"on": False}),
+                                   ("GET", "/api/remote", None), ("POST", "/api/program/run", {"path": "/etc/hosts"}),
+                                   ("GET", "/api/program/analyze?path=/etc/hosts", None), ("POST", "/api/remote/forget", {})]:
+            code, out, _ = self.raw(rb, method, path, body, headers=cookie)
+            self.assertEqual(code, 403, (path, out))
+        code, out, _ = self.raw(rb, "POST", "/api/hold", {}, headers=cookie | {"Origin": "http://evil.example"})
+        self.assertEqual(code, 403, out)
+        # forgetting the device revokes its cookie
+        self.call("POST", "/api/remote/forget", {}, wait=False)
+        code, out, _ = self.raw(rb, "GET", "/api/status", headers=cookie)
+        self.assertEqual(code, 401, out)
+        # off: the LAN listener closes and the setting is saved
+        v = self.call("POST", "/api/remote", {"on": False}, wait=False)
+        self.assertFalse(v["on"])
+        self.assertIsNone(v["code"])
+        self.assertFalse(json.load(open(cfg_path))["remote"])
+        with self.assertRaises(urllib.error.URLError):
+            urllib.request.urlopen(rb + "/", timeout=2)
+        self.call("POST", "/api/disconnect", {}, wait=False)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -1,0 +1,13 @@
+{
+  "name": "Carvera Control",
+  "short_name": "Carvera",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#12161b",
+  "theme_color": "#1a2027",
+  "icons": [
+    { "src": "icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

@@ -75,6 +75,10 @@ print(f"CARVERA CONTROL  {BASE}  (server {'started now' if started else 'already
 conn = "CONNECTED" if s.get("connected") else "NOT CONNECTED"
 print(f"Machine: {info.get('name', 'Carvera')} {s.get('host') or '(auto-discover)'}:{s.get('port')}  fw {info.get('version', '?')}  {conn}"
       + (f"  state {st.get('state')}" if s.get("connected") else ""))
+rem = s.get("remote") or {}
+if rem.get("on"):
+    print(f"Phone/tablet access: ON, port {rem.get('port')}, {rem.get('devices', 0)} paired device(s)"
+          "  (address and code: carvera-api GET /api/remote)")
 if note:
     print(f"!! connect: {note}")
 if s.get("connected"):

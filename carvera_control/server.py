@@ -10,11 +10,16 @@ import re
 import threading
 import time
 import urllib.parse
+from http.cookies import CookieError, SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import program as prog
 from .machine import AXES, Busy, Machine, MachineError, discover
+from .remote import COOKIE, COOKIE_MAX_AGE, DEFAULT_REMOTE_PORT, Remote, remote_allowed
 from .store import Activity, Points
+
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -22,7 +27,8 @@ DEFAULT_PORT = 17916
 # host "" = use the Carvera found by its UDP 3333 broadcast
 DEFAULT_CONFIG = {"host": "", "port": 2222, "safe_z_machine": -3.0,
                   "feeds": {"xy": 1000, "z": 500}, "vacuum_power": 80, "spindle_rpm": 10000,
-                  "probe_stow_extra_mm": 2.0}   # 0 = firmware M6 drop; probe_slot overrides PROBE_SLOT_DEFAULT
+                  "probe_stow_extra_mm": 2.0,   # 0 = firmware M6 drop; probe_slot overrides PROBE_SLOT_DEFAULT
+                  "remote": False, "remote_port": DEFAULT_REMOTE_PORT}   # phone/tablet access (remote.py)
 
 
 class App:
@@ -44,6 +50,35 @@ class App:
                                activity=self.activity, discovery=discovery,
                                probe_stow_extra_mm=self.config.get("probe_stow_extra_mm", 2.0),
                                probe_slot=self.config.get("probe_slot"))
+        self.remote = Remote(data_dir, int(self.config.get("remote_port", DEFAULT_REMOTE_PORT)),
+                             self.activity, probe_host=lambda: self.machine.host)
+
+    # ---- phone and tablet access
+    def start_remote(self) -> None:
+        self.remote.start(make_handler(self, remote=True))
+
+    def set_remote(self, on: bool, source: str) -> dict:
+        if on:
+            self.start_remote()
+        else:
+            self.remote.stop()
+        self._persist("remote", bool(on))
+        self.activity(source, "phone_access", {"on": bool(on), "port": self.remote.bound_port()})
+        return self.remote.view(with_code=True)
+
+    def _persist(self, key: str, value) -> None:
+        """Change one key in data/config.json, keeping the rest of the file as the user wrote it."""
+        self.config[key] = value
+        path = os.path.join(self.data_dir, "config.json")
+        try:
+            with open(path) as f:
+                cur = json.load(f)
+        except (OSError, ValueError):
+            cur = {}
+        cur[key] = value
+        with open(path + ".tmp", "w") as f:
+            json.dump(cur, f, indent=2)
+        os.replace(path + ".tmp", path)
 
     # ---- composite operation: go to a saved point
     def op_goto(self, job, name: str, mode: str = "lift", include_z: bool = False,
@@ -82,10 +117,14 @@ class App:
         snap["points_count"] = len(self.points.points)
         snap["config"] = self.config
         snap["activity_seq"] = self.activity.seq
+        snap["remote"] = {"on": self.remote.on, "port": self.remote.bound_port(),
+                          "devices": len(self.remote.devices)}
         return snap
 
 
-def make_handler(app: App):
+def make_handler(app: App, remote: bool = False):
+    """remote=False: the 127.0.0.1 listener (trusted). remote=True: the LAN listener for paired
+    phones and tablets (see remote.py)."""
     m = app.machine
 
     class H(BaseHTTPRequestHandler):
@@ -95,12 +134,14 @@ def make_handler(app: App):
             pass
 
         # -- helpers
-        def _send(self, code: int, obj) -> None:
+        def _send(self, code: int, obj, headers: dict | None = None) -> None:
             body = json.dumps(obj, default=str).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for k, v in (headers or {}).items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
 
@@ -111,7 +152,49 @@ def make_handler(app: App):
             return json.loads(self.rfile.read(n) or b"{}")
 
         def _source(self) -> str:
+            if remote:
+                return "remote"
             return (self.headers.get("X-Source") or "api")[:16]
+
+        def _cookie(self) -> str | None:
+            c = SimpleCookie()
+            try:
+                c.load(self.headers.get("Cookie") or "")
+            except CookieError:
+                return None
+            v = c.get(COOKIE)
+            return v.value if v else None
+
+        def _guard(self, method: str, path: str):
+            """Returns (code, body) to refuse the request, or None to go on."""
+            host = self.headers.get("Host") or ""
+            if not remote and host:
+                name = host.split("]")[0] + "]" if host.startswith("[") else host.rsplit(":", 1)[0]
+                if name not in LOCAL_HOSTS:   # DNS rebinding: a web page must not reach this port by name
+                    return 403, {"error": "this port answers only on 127.0.0.1; phones and tablets use phone access"}
+            origin = self.headers.get("Origin")
+            if method != "GET" and origin is not None and urllib.parse.urlparse(origin).netloc != host:
+                return 403, {"error": "cross-site request refused"}
+            if remote and path.startswith("/api/"):
+                if method == "POST" and path == "/api/pair":
+                    return None
+                if not remote_allowed(method, path):
+                    return 403, {"error": "not available from a phone or tablet; do this on the computer running Carvera Control"}
+                if not app.remote.check(self._cookie()):
+                    return 401, {"error": "pair this device first", "pair": True}
+            return None
+
+        def _pair(self, b: dict):
+            ip = self.client_address[0]
+            got = app.remote.pair(b.get("code"), b.get("name", ""), ip)
+            if not got:
+                app.activity("remote", "pair:failed", {"ip": ip})
+                return self._send(401, {"error": "Wrong code. Use the code shown in Carvera Control on the computer; it changes after "
+                                                 "5 wrong tries and after every pairing.", "pair": True})
+            token, dev = got
+            app.activity("remote", "pair", {"device": dev["name"], "ip": ip})
+            cookie = f"{COOKIE}={token}; Path=/; Max-Age={COOKIE_MAX_AGE}; HttpOnly; SameSite=Strict"
+            return self._send(200, {"paired": True, "device": dev["name"]}, {"Set-Cookie": cookie})
 
         def _job(self, kind, fn, params, q):
             job = m.start_job(kind, fn, params, source=self._source())
@@ -132,6 +215,7 @@ def make_handler(app: App):
             self.send_header("Content-Type", mimetypes.guess_type(full)[0] or "application/octet-stream")
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             self.wfile.write(data)
 
@@ -139,11 +223,16 @@ def make_handler(app: App):
             u = urllib.parse.urlparse(self.path)
             path, q = u.path, urllib.parse.parse_qs(u.query)
             try:
+                refused = self._guard(method, path)
+                if refused:
+                    return self._send(*refused)
                 if not path.startswith("/api/"):
                     if method == "GET":
                         return self._static(path)
                     return self._send(404, {"error": "not found"})
                 b = self._body() if method in ("POST", "PATCH") else {}
+                if remote and path == "/api/pair":
+                    return self._pair(b)
                 return self._api(method, path, q, b)
             except Busy as e:
                 return self._send(409, {"error": str(e)})
@@ -156,7 +245,9 @@ def make_handler(app: App):
             src = self._source()
             if method == "GET":
                 if path == "/api/status":
-                    return self._send(200, app.state())
+                    return self._send(200, app.state() | {"client": "remote" if remote else "local"})
+                if path == "/api/remote":
+                    return self._send(200, app.remote.view(with_code=True))
                 if path == "/api/points":
                     return self._send(200, {"points": app.points.list()})
                 if path == "/api/activity":
@@ -230,6 +321,17 @@ def make_handler(app: App):
                     app.activity(src, "spindle", {"on": on, "rpm": rpm if on else None,
                                                   "confirmed": out["confirmed"], "command": out["command"]})
                     return self._send(200, out)
+                if path == "/api/remote":
+                    if "on" not in b:
+                        raise MachineError("give on: true or false")
+                    try:
+                        return self._send(200, app.set_remote(bool(b["on"]), src))
+                    except OSError:
+                        return self._send(409, app.remote.view(with_code=True) | {"error": app.remote.error})
+                if path == "/api/remote/forget":
+                    n = app.remote.forget(b.get("id"))
+                    app.activity(src, "phone_forget", {"id": b.get("id") or "all", "removed": n})
+                    return self._send(200, app.remote.view(with_code=True))
                 if path == "/api/offsets/refresh":
                     if m._op_lock.locked():
                         raise Busy("machine busy")
@@ -332,6 +434,7 @@ def main(argv=None) -> None:
     ap.add_argument("--data", default=os.path.join(ROOT, "data"))
     ap.add_argument("--sim", action="store_true", help="connect to the simulator at 127.0.0.1:22222")
     ap.add_argument("--connect", action="store_true", help="connect to the machine at startup")
+    ap.add_argument("--remote", action="store_true", help="turn on phone/tablet access (LAN, pairing code)")
     a = ap.parse_args(argv)
     if a.sim:
         app = App(os.path.join(a.data, "sim"), "127.0.0.1", a.machine_port or 22222, discovery=False)
@@ -340,6 +443,14 @@ def main(argv=None) -> None:
     srv = build_server(app, a.port)
     where = f"{app.machine.host}:{app.machine.port}" if app.machine.host else "auto-discover on UDP 3333"
     print(f"Carvera Control on http://127.0.0.1:{a.port}  (machine {where})", flush=True)
+    if a.remote or app.config.get("remote"):
+        try:
+            app.start_remote()
+            v = app.remote.view(with_code=True)
+            print(f"Phone/tablet access on {', '.join(v['urls']) or 'port ' + str(v['port'])}  "
+                  f"(pairing code {v['code']})", flush=True)
+        except OSError:
+            print(f"Phone/tablet access failed: {app.remote.error}", flush=True)
     if a.connect:
         threading.Thread(target=lambda: _try_connect(app), daemon=True).start()
     try:
@@ -347,6 +458,7 @@ def main(argv=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        app.remote.stop()
         if app.machine.connected:
             app.machine.disconnect()
 

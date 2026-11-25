@@ -1,7 +1,10 @@
 # Carvera Control HTTP API
 
 Base URL: `http://127.0.0.1:17916` (change with `--port` or `CARVERA_PORT`). JSON in, JSON out.
-The server listens on localhost only.
+This port listens on localhost only. It refuses requests whose `Host` is not 127.0.0.1 / localhost
+(DNS rebinding) and POST/PATCH/DELETE requests with a cross-site `Origin`. Scripts and agents (no
+`Origin` header) are unaffected. Phones and tablets use a second port: see
+[Phone and tablet access](#phone-and-tablet-access).
 
 - **Source labels.** Send `X-Source: ui | mcp | <name>` to label your actions in the activity log. The web
   UI sends `ui`, `carvera-api` and the MCP server send `mcp`, and anything else defaults to `api`.
@@ -16,7 +19,7 @@ The server listens on localhost only.
 
 | Endpoint | Body / query | What it does |
 |---|---|---|
-| `GET /api/status` | | Connection, parsed status (state, machine/work position, feed, spindle rpm, tool, TLO, probe battery, program progress), offsets (G54–G59, TLO, PRB), modal state, `vacuum`, `spindle`, the raw `diag` reply, the current job, and sequence numbers for activity and messages. |
+| `GET /api/status` | | Connection, parsed status (state, machine/work position, feed, spindle rpm, tool, TLO, probe battery, program progress), offsets (G54–G59, TLO, PRB), modal state, `vacuum`, `spindle`, the raw `diag` reply, the current job, sequence numbers for activity and messages, `remote` (`{on, port, devices}`) and `client` (`local`, or `remote` on the phone port). |
 | `POST /api/connect` | `{host?, force?}` | Connects. With no host (and none configured), it uses the Carvera found on UDP 3333. Refuses if the discovery broadcast says another controller is connected, unless `force`. |
 | `POST /api/disconnect` | | Closes the connection, handing the machine back to CarveraController. |
 | `GET /api/discover` | `?timeout=3` | Lists Carveras broadcasting on UDP 3333: `{name, ip, port, busy}`. |
@@ -54,6 +57,34 @@ The server listens on localhost only.
 nothing moving. Carvera Control treats "Run with the spindle on, no program playing, no tool change" as
 ready: `jog`, `move`, `goto`, `zero` and `gcode` jobs run while it turns. `home`, `tool`, `probe/z`,
 `program/upload` and `program/run` refuse with "the spindle is running; stop it before …".
+
+## Phone and tablet access
+
+A second listener, `0.0.0.0:<remote_port>` (17917), serves the same UI to paired phones and tablets
+while phone access is on. Guide: [PHONE.md](PHONE.md). Code: `carvera_control/remote.py`.
+
+On 127.0.0.1 (the phone port refuses these with 403):
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `GET /api/remote` | | `{on, port, urls, code, tries_left, devices:[{id, name, paired, last_seen, ip}], error}`. `urls` lists the Bonjour `.local` name first, then the LAN IP. |
+| `POST /api/remote` | `{on}` | Starts or stops the listener and saves `"remote"` in `data/config.json`. A new pairing code on every start. 409 with `error` if the port can't be opened. |
+| `POST /api/remote/forget` | `{id?}` | Forgets one paired device, or all of them without `id`. Their cookies stop working at once. |
+
+On the phone port:
+
+| Endpoint | Body | Notes |
+|---|---|---|
+| `POST /api/pair` | `{code, name}` | Pairs a device. Success sets the `cc_device` cookie (HttpOnly, SameSite=Strict, one year) and changes the code; `data/devices.json` stores only the cookie's SHA-256. A wrong code returns 401; 5 wrong codes change the code. |
+
+- Static files (the UI) load without pairing, so an unpaired device sees the pairing screen. Every
+  other `/api/` call needs the cookie (401 `{"pair": true}` without it).
+- Allowed for a paired device (`REMOTE_GET` / `REMOTE_POST` in `remote.py`): status, points (list,
+  save, edit, delete, go to), activity, messages, job status, vacuum, spindle, connect, disconnect,
+  hold, resume, stop, unlock, jog, move, home, tool, probe/z, zero. Everything else answers 403: raw
+  G-code, programs, discovery, offsets refresh and `/api/remote`.
+- Actions from the phone port are logged with source `remote` (the `X-Source` header is ignored).
+- POSTs with a cross-site `Origin` are refused here too.
 
 ## Programs
 
@@ -110,9 +141,11 @@ Created on first run with these defaults; edit and restart the server.
 | `spindle_rpm` | `10000` | Default spindle speed for the UI. |
 | `probe_stow_extra_mm` | `2.0` | Extra plunge when stowing the probe (0 = off). |
 | `probe_slot` | (absent) | Overrides the probe slot `{x, y, z, approach, fast_feed, slow_feed, lift_z, clearance_z}`. |
+| `remote` | `false` | Phone and tablet access on at start. The Phone dialog saves it. |
+| `remote_port` | `17917` | Port of the phone and tablet listener. |
 
 Command-line options: `python3 -m carvera_control [--port N] [--machine IP] [--machine-port N] [--data DIR]
-[--connect] [--sim]`.
+[--connect] [--sim] [--remote]` (`--remote` turns phone and tablet access on for one run).
 
 ## MCP tools
 

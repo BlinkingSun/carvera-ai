@@ -12,6 +12,8 @@ Treat every motion as something that can break a tool, a part, a fixture or a fi
 | Interlock | Where |
 |---|---|
 | One machine operation at a time; others get 409 | server |
+| The 127.0.0.1 port refuses other `Host` names (DNS rebinding) and cross-site POSTs (`Origin`), so a web page in your browser can't drive the machine | server |
+| Phone and tablet access is off by default. When on, a device needs the 6-digit pairing code (it changes after each pairing and after 5 wrong tries), and a paired device gets only the web UI's controls: no raw G-code, programs or phone-access settings | `remote.py` |
 | Motion only when the machine is Idle; operations fail fast if it enters Alarm | `machine.py` |
 | Jogs and moves outside machine travel (X −371…0, Y −250…0, Z −135…0) are refused | `machine.py` |
 | Raw G-code may not start the spindle (`M3/M4`) unless `allow_spindle`, and may not change tools | `/api/gcode` |
@@ -22,6 +24,15 @@ Treat every motion as something that can break a tool, a part, a fixture or a fi
 | A program runs only if the machine's copy has the same MD5 as the local file | `/api/program/run` |
 | **Kill switch** during a run: spindle on, no tool change, and the tool below work Z3 outside the program's XY extents + 3 mm, or below its lowest Z − 0.5 mm → feed hold + abort | `program.py` |
 | The deep probe stow checks the firmware's slot table first, keeps the firmware's own slot sensor checks, and refuses an extra plunge over 3 mm | `machine.py` |
+
+## Phones and tablets
+
+- STOP on a phone is a software stop over Wi-Fi, like the computer's. Keep the E-stop in reach.
+- The phone port is plain HTTP. Someone who can capture your Wi-Fi traffic could copy a device cookie
+  while phone access is on. Use it on your own network, turn it off when you are done, and forget
+  devices you no longer use. Details: [PHONE.md](PHONE.md#security).
+- Actions from a phone are logged as `remote`. The skill tells the agent to re-read the position before
+  every motion step, because you may have moved the machine from the phone.
 
 ## Site rules (`site-rules.txt`)
 
@@ -51,6 +62,7 @@ a program around a keep-out zone.
   envelope, vacuum) and wait for an explicit "go".
 - Never force a connection over another controller, and never delete anything (files, the machine's
   SD card) without asking.
+- Turn phone and tablet access on or off, and forget devices, only when the user asks.
 - After a stop or alarm, the probe charger is off: send `M841` once the machine is unlocked.
 - Don't run a leveling grid with a low probe battery (below about 3.5 V off the charger): a low probe can
   miss a trigger and drive into the work.

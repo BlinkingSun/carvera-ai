@@ -1,6 +1,6 @@
 ---
 name: carvera-ai
-description: Carvera AI — drive a Makera Carvera CNC (C1, firmware 1.0.3) from plain-text conversation through Carvera Control, a local server with a jog/indexing web UI, an HTTP API and an MCP server. It starts the server, connects to the machine over Wi-Fi, opens the UI and loads the machine state, saved indexing points, recent UI activity, site rules, the API and the firmware's quirks into context, so the agent can plan, do the math, probe, level, upload and run programs with the user. Use when the user types /carvera-ai, or asks to open, connect to, control, jog, probe, index, level or run a job on the Carvera, the CNC, the jog UI or "Carvera Control". Text after /carvera-ai is the first task. Always obey the site rules printed by carvera-open (reference setup: the tool never goes below the spoilboard top within R5 of the dowels at X82.5 Y126 and X171 Y37.5, and nothing travels over anchor 1).
+description: Carvera AI — drive a Makera Carvera CNC (C1, firmware 1.0.3) from plain-text conversation through Carvera Control, a local server with a jog/indexing web UI, an HTTP API and an MCP server. It starts the server, connects to the machine over Wi-Fi, opens the UI and loads the machine state, saved indexing points, recent UI activity, site rules, the API and the firmware's quirks into context, so the agent can plan, do the math, probe, level, upload and run programs with the user, and walks the user through phone and tablet control. Use when the user types /carvera-ai, or asks to open, connect to, control, jog, probe, index, level or run a job on the Carvera, or to set up phone or tablet control, the CNC, the jog UI or "Carvera Control". Text after /carvera-ai is the first task. Always obey the site rules printed by carvera-open (reference setup: the tool never goes below the spoilboard top within R5 of the dowels at X82.5 Y126 and X171 Y37.5, and nothing travels over anchor 1).
 ---
 
 # Carvera AI
@@ -9,7 +9,7 @@ The user positions the machine in the **web UI** (jogging, touching off edges, s
 points). You read what they did, do the planning and the math, and act on the machine when asked.
 One server (`127.0.0.1:17916`) owns the machine's single TCP connection. The UI, the `carvera` MCP
 server and `carvera-api` all go through it, and every action is logged with its source (`ui`, `mcp`,
-`api`).
+`api`, or `remote` for a paired phone or tablet).
 
 Project root: `$CARVERA_CONTROL_HOME`, or the `carvera-ai` repository this skill lives in. The full API
 is in `docs/API.md`, the firmware notes in `docs/FIRMWARE-NOTES.md`, the safety rules in `docs/SAFETY.md`.
@@ -43,7 +43,7 @@ logged as source `mcp`). POSTs wait for the job to finish:
 
 ```sh
 carvera-api GET  /api/status
-carvera-api GET  /api/activity            # what the user just did in the UI (source "ui")
+carvera-api GET  /api/activity            # what the user just did: "ui" = the computer's browser, "remote" = a paired phone/tablet
 carvera-api GET  /api/points
 carvera-api POST /api/jog   '{"axis":"x","distance":0.2,"feed":300}'
 carvera-api POST /api/move  '{"x":181.2,"system":"work","feed":300}'       # or "system":"machine"
@@ -90,6 +90,8 @@ running: wait, or ask the user.
   envelope, vacuum) and get an explicit "go" first.
 - Never delete anything (files on the computer, the machine's SD card or anywhere else) without asking.
 - STOP in the UI or API is a software stop. The machine's E-stop is the real one.
+- Activity with source `remote` is the user on a phone or tablet, probably standing at the machine.
+  Re-read the position and tool before every motion step: they may have moved it.
 
 ## 4. Machine facts (Carvera C1, firmware 1.0.3)
 
@@ -178,3 +180,44 @@ model the part in Fusion, create the CAM setup and toolpaths, post with `Carvera
 codes, check the program against the site rules, index the stock (probe Z, touch-offs, saved points),
 level if needed, upload, preflight, and run it on the machine with the user's go. The steps and the
 pitfalls (Fusion Personal limits, the vacuum codes, the probe stow) are in `docs/FUSION-WORKFLOW.md`.
+
+## 9. Phone and tablet setup (walk the user through it)
+
+When the user asks to control the machine from a phone or tablet ("set up phone control", "use it from
+my iPad"), follow these steps. The user's guide is `docs/PHONE.md`; point them to it at the end.
+
+1. **Check the server has it:** `carvera-api GET /api/remote`. "unknown endpoint" means the running
+   server is older than the code: restart it (stop the server process, then `carvera-open --no-ui`),
+   but only while the machine is Idle with no job running, and tell the user first.
+2. **Turn it on** (the user's request covers this): `carvera-api POST /api/remote '{"on":true}'`.
+   A 409 "cannot listen on port" means the port is taken: set `"remote_port"` in `data/config.json` and
+   restart.
+3. **Give the user the address and the code** from the reply. `urls` lists the `.local` name first (it
+   survives IP changes) and the IP address as the fallback. Read `code` as two groups ("123 456"). Tell
+   them: same Wi-Fi as this computer, open the address in Safari or Chrome, enter the code, tap Pair.
+4. **Wait for the pairing.** Poll `carvera-api GET /api/remote` every few seconds (up to about 3
+   minutes) until `devices` gains an entry. `GET /api/activity` shows `remote pair` on success and
+   `remote pair:failed` on a wrong code. Codes change after every pairing and after 5 wrong tries, so
+   on a failure read them the current `code`.
+5. **Confirm by name** ("Paired: iPhone"). Then the Home Screen:
+   - iPhone/iPad Safari: Share → Add to Home Screen. The icon may ask for a code once (iOS keeps its
+     cookies apart from Safari); read them a fresh `code`.
+   - Android Chrome: ⋮ → Add to Home screen.
+6. **Tell them the essentials.** This computer keeps the machine connection, so it must stay awake with
+   Carvera Control running. STOP on the phone is a software stop; the E-stop is the real one. Raw
+   G-code and programs stay on the computer. Turn access off in the Phone dialog (or ask you) when done.
+
+**If the phone cannot open the address:**
+- Check `curl -s -o /dev/null -w "%{http_code}" http://<ip>:<port>/` from this computer. 200 means the
+  listener is up and the problem is between the phone and the computer.
+- Same network? Guest Wi-Fi often isolates devices. Some Android phones don't resolve `.local`: use the
+  IP address.
+- Firewall. macOS: `/usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate`; if it is on, the
+  user clicks Allow for Python or adds it in System Settings → Network → Firewall → Options. Windows:
+  allow Python on private networks. Linux: `sudo ufw allow <port>/tcp`. Ask before changing firewall
+  settings yourself.
+- The computer went to sleep or Carvera Control stopped: start it again (`carvera-open --no-ui`).
+
+**Rules:** turn phone access on or off, and forget devices (`POST /api/remote/forget '{"id":...}'`, no
+id = all), only when the user asks. A phone cannot reach `/api/remote`, raw G-code or programs (403),
+which is by design.

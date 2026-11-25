@@ -93,6 +93,13 @@ export CARVERA_CONTROL_HOME=/path/to/carvera-ai
 `carvera-open` and `carvera-api` are zsh scripts (macOS default; `apt install zsh` on Linux). The HTTP
 API itself needs nothing but `curl`.
 
+## Phone and tablet setup from any harness
+
+The phone setup in `SKILL.md` section 9 needs only the HTTP API (`GET` / `POST /api/remote`), so any
+harness that can run `carvera-api` or `curl` can walk you through it. Paste the prompt from
+[PHONE.md](PHONE.md#set-it-up-with-your-agent-recommended); in a harness without slash commands, start
+with "Read skill/carvera-ai/SKILL.md, then set up phone control for me".
+
 ## Environment variables
 
 | Variable | Default | Used by |

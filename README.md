@@ -5,7 +5,8 @@
 Carvera AI is three things in one repository:
 
 1. **Carvera Control**: a small local server for the Makera Carvera C1 (firmware 1.0.3). It holds the
-   machine's single Wi-Fi connection and gives it a web UI for jogging and indexing, a JSON HTTP API,
+   machine's single Wi-Fi connection and gives it a web UI for jogging and indexing (on the computer,
+   or on a paired phone or tablet), a JSON HTTP API,
    an MCP server for AI agents, a program uploader/runner with a kill switch, onboard vacuum and spindle
    switches, and a full machine simulator for tests.
 2. **The Carvera AI skill**: a `SKILL.md` playbook plus two helper commands. It teaches an agent
@@ -45,6 +46,37 @@ fixtures, routed the tool around the anchor block, and cut all 48 holes in 11 mi
 the drawing, the ready-to-run program, a generator for other sheet thicknesses and hole sizes, and a
 prompt to paste into your agent.
 
+## Featured: phone and tablet control
+
+<a href="docs/PHONE.md"><img src="docs/phone.jpg" width="300" align="right" alt="Carvera Control on an iPhone, connected to a real Carvera C1: state and work position pinned at the top, vacuum and spindle switches, the position readout, and Hold, Resume, Unlock and STOP fixed at the bottom"></a>
+
+Stand at the machine and run it from your phone or tablet: jog, zero, change tools, probe, switch the
+vacuum and spindle, save indexing points and hit STOP. The computer keeps the machine connection; the
+phone pairs once with a 6-digit code shown in Carvera Control.
+
+- Phone layout: state and work X/Y/Z pinned at the top, a full-width jog pad, and Hold / Resume /
+  Unlock / STOP fixed at the bottom. Tablets get bigger touch targets.
+- Add to Home Screen for an app icon that opens full screen.
+- Off by default, pairing required, and a phone gets only the page's controls (no raw G-code or
+  programs). Its actions are logged as `remote`, so your agent knows you are at the machine.
+
+**Set it up from your agent.** Paste:
+
+```text
+/carvera-ai Set up phone control for me. Turn on phone
+and tablet access in Carvera Control, give me the address
+to open on my phone and the pairing code, wait until my
+phone shows up as paired, then tell me how to add it to
+my Home Screen. If my phone can't reach it, troubleshoot
+with me.
+```
+
+The agent follows the setup steps in the skill ([section 9](skill/carvera-ai/SKILL.md)). By hand:
+**Phone** in the header → **Turn on** → open the address on the phone → enter the code.
+**[Phone and tablet guide →](docs/PHONE.md)**
+
+<br clear="right">
+
 ---
 
 ## What an agent can do with it
@@ -66,6 +98,9 @@ Working examples from the reference machine, all driven by conversation:
   ([files and how-to](machines/makera-carvera-c1/spoilboard/)).
 - **"Turn the vacuum on" / "start the spindle at 12000."** Switches with read-back confirmation from the
   machine.
+- **"Set up phone control."** The agent turns on phone access, reads you the address and pairing code,
+  waits for your phone to pair, and troubleshoots the network if it can't connect
+  ([guide](docs/PHONE.md)).
 
 ### From text to a finished part with Autodesk Fusion
 
@@ -153,7 +188,9 @@ setup's dowel and anchor rules), and read [docs/SAFETY.md](docs/SAFETY.md).
   machine and work coordinates, tool, TLO and G54. Go to a point at the current height or after lifting.
 - **Header**: connection, onboard **vacuum** (power %, On/Off, confirmed by the machine), **spindle**
   (rpm, Start with confirmation, Stop; refused with the probe or an empty spindle and while a program
-  runs; you can keep jogging while it turns, for manual control), Hold, Resume, Unlock and STOP.
+  runs; you can keep jogging while it turns, for manual control), **Phone** (turn phone and tablet
+  access on, see the address and pairing code, forget devices), Hold, Resume, Unlock and STOP.
+- **Phones and tablets**: the same page in a touch layout, after pairing. See [docs/PHONE.md](docs/PHONE.md).
 - **Activity and machine messages**: everything you, the agent and the system did, and everything the
   machine printed.
 
@@ -161,15 +198,15 @@ setup's dowel and anchor rules), and read [docs/SAFETY.md](docs/SAFETY.md).
 
 | Path | What it is |
 |---|---|
-| `carvera_control/` | The server (standard library only). `machine.py` = connection, status parsing, operations (jog, move, home, tool change with deep probe stow, probe, zero, raw G-code, vacuum, spindle, upload/run). `program.py` = program analysis, XMODEM upload, run with kill switch. `server.py` = HTTP API, jobs, config. `store.py` = activity log and saved points. |
-| `web/` | The web UI (`index.html`, `app.js`, `style.css`), served by the server. No build step. |
+| `carvera_control/` | The server (standard library only). `machine.py` = connection, status parsing, operations (jog, move, home, tool change with deep probe stow, probe, zero, raw G-code, vacuum, spindle, upload/run). `program.py` = program analysis, XMODEM upload, run with kill switch. `server.py` = HTTP API, jobs, config. `remote.py` = phone and tablet access (LAN listener, pairing, allowlist). `store.py` = activity log and saved points. |
+| `web/` | The web UI (`index.html`, `app.js`, `style.css`, with the phone and tablet layout), plus `manifest.webmanifest` and icons for Add to Home Screen. Served by the server. No build step. |
 | `mcp/carvera_mcp.py` | MCP server (stdio) exposing the API as 24 tools for agents. Starts the server if it isn't running. |
 | `skill/carvera-ai/SKILL.md` | The Carvera AI skill: the agent's playbook for this machine. |
 | `skill/carvera-ai/bin/carvera-open` | Starts the server, connects, opens the UI and prints the machine context (state, offsets, site rules, points, activity) for the agent. |
 | `skill/carvera-ai/bin/carvera-api` | `carvera-api METHOD /path [json]`: calls the API as the agent; POSTs wait for the job. |
 | `site-rules.txt` | Your machine's hard rules (no-go zones, keep-outs). Printed by `carvera-open` every session. Ships with the reference setup's rules. |
 | `sim/carvera_sim.py` | A Carvera simulator (status, ATC, probing, XMODEM upload, SD playback, vacuum, spindle, tool rack, alarms) that mimics firmware 1.0.3's quirks. |
-| `tests/` | End-to-end tests against the simulator: `test_e2e.py` (UI/API flow, vacuum, probe stow, spindle), `test_program.py` (upload, run, kill switch), `test_mcp.py` (MCP tools). |
+| `tests/` | End-to-end tests against the simulator: `test_e2e.py` (UI/API flow, vacuum, probe stow, spindle, phone access), `test_program.py` (upload, run, kill switch), `test_mcp.py` (MCP tools). |
 | `tools/spoilboard_holes.py` | Generates the spoilboard hole program from Makera's C1 bed pattern, routed around the anchor. |
 | `tools/spoilboard_drawing.py` | Draws the A3 spoilboard PDF from the hole program. |
 | `tools/leveling/` | Offline auto-leveling: parse a probed grid, level a program, verify the result. See [docs/LEVELING.md](docs/LEVELING.md). |
@@ -185,13 +222,14 @@ setup's dowel and anchor rules), and read [docs/SAFETY.md](docs/SAFETY.md).
 - [docs/HARNESSES.md](docs/HARNESSES.md): setup for Claude Code, Codex, Grok, Cursor, Gemini and other MCP clients.
 - [docs/FUSION-WORKFLOW.md](docs/FUSION-WORKFLOW.md): text to model to CAM to finished part.
 - [docs/LEVELING.md](docs/LEVELING.md): how the Carvera's leveling really works, and offline leveling.
+- [docs/PHONE.md](docs/PHONE.md): phone and tablet control: setup, the setup prompt, security, troubleshooting.
 - [docs/FIRMWARE-NOTES.md](docs/FIRMWARE-NOTES.md): firmware 1.0.3 protocol facts found on the real machine.
 - [machines/makera-carvera-c1/README.md](machines/makera-carvera-c1/README.md): the C1 kit.
 
 ## Tests
 
 ```sh
-python3 tests/test_e2e.py         # simulator <- server <- HTTP API: full flow, vacuum, probe stow, spindle
+python3 tests/test_e2e.py         # simulator <- server <- HTTP API: full flow, vacuum, probe stow, spindle, phone access
 python3 tests/test_program.py     # analyze, XMODEM upload (NAK, busy), md5, play with tool changes, kill switch
 python3 sim/carvera_sim.py & python3 -m carvera_control --sim --port 17999 --data /tmp/cc-mcp & \
   python3 tests/test_mcp.py 17999 # MCP tools over stdio (needs the mcp package)

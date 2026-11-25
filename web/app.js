@@ -15,7 +15,11 @@ async function api(method, path, body) {
   });
   let out = {};
   try { out = await r.json(); } catch (_) {}
-  if (!r.ok) throw new Error(out.error || `${r.status}`);
+  if (!r.ok) {
+    const e = new Error(out.error || `${r.status}`);
+    e.pair = r.status === 401 && !!out.pair;   // phone/tablet that is not paired (yet)
+    throw e;
+  }
   return out;
 }
 
@@ -36,10 +40,12 @@ async function poll() {
     S = await api("GET", "/api/status");
     render();
   } catch (e) {
+    if (e.pair) return showPair();          // polling restarts after pairing
     document.body.classList.add("offline");
     $("#state").textContent = "Server down"; $("#state").className = "pill Alarm";
+    $("#mState").textContent = "Server down"; $("#mState").className = "pill Alarm";
   }
-  setTimeout(poll, 250);
+  setTimeout(poll, document.hidden ? 2000 : 250);
 }
 
 function render() {
@@ -53,6 +59,7 @@ function render() {
   pill.textContent = busy ? `${state} · ${S.job.kind}` : state;
   pill.className = "pill " + (connected ? (st.state || "") : "off");
   $("#machine").textContent = connected ? `${S.info.name || "Carvera"} ${S.host}${S.info.version ? " · fw " + S.info.version : ""}` : S.host;
+  $("#machine").title = $("#machine").textContent;
   $("#btnConnect").textContent = connected ? "Disconnect" : "Connect";
   $("#banner").classList.toggle("hidden", !(connected && (st.state || "").startsWith("Alarm")));
   if (connected && (st.state || "").startsWith("Alarm")) $("#banner").textContent = "Machine in ALARM. Check it, then press Unlock (and Home if position may be lost).";
@@ -60,7 +67,13 @@ function render() {
   for (const a of ["x", "y", "z"]) {
     $("#w" + a).textContent = st.wpos ? fmt(st.wpos[a]) : "—";
     $("#m" + a).textContent = st.mpos ? fmt(st.mpos[a]) : "—";
+    $("#mW" + a).textContent = st.wpos ? fmt(st.wpos[a]) : "—";
   }
+  $("#mState").textContent = pill.textContent; $("#mState").className = pill.className;
+  const rb = $("#btnRemote"), rem = S.remote || {};
+  rb.classList.toggle("hidden", S.client === "remote");      // phone access is managed on the computer
+  rb.classList.toggle("on", !!rem.on);
+  rb.textContent = rem.on ? "Phone · on" : "Phone";
   $("#tool").textContent = connected ? S.tool_name : "—";
   $("#tlo").textContent = fmt(st.tlo);
   $("#probev").textContent = st.probe_v ? `${fmt(st.probe_v, 2)} V` : "—";
@@ -154,6 +167,61 @@ async function setSpindle(on) {
     try { if (on) localStorage.setItem("cc.spinRpm", String(rpm)); } catch (_) {}
   } catch (e) { toast(e.message, true); }
   finally { spinBusy = false; }
+}
+
+// ---------------------------------------------------------------- phone / tablet pairing (remote listener)
+function guessDeviceName() {
+  const ua = navigator.userAgent;
+  if (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) return "iPad";
+  if (/iPhone/.test(ua)) return "iPhone";
+  if (/Android/.test(ua)) return /Mobile/.test(ua) ? "Android phone" : "Android tablet";
+  return "Phone or tablet";
+}
+
+function showPair() {
+  $("#pair").classList.remove("hidden");
+  if (!$("#pairName").value) $("#pairName").value = guessDeviceName();
+  setTimeout(() => $("#pairCode").focus(), 50);
+}
+
+async function submitPair(e) {
+  e.preventDefault();
+  $("#pairErr").textContent = "";
+  $("#pairBtn").disabled = true;
+  try {
+    const r = await api("POST", "/api/pair", { code: $("#pairCode").value, name: $("#pairName").value });
+    $("#pair").classList.add("hidden");
+    $("#pairCode").value = "";
+    toast(`Paired as ${r.device}`);
+    refreshPoints(); poll();
+  } catch (err) {
+    $("#pairErr").textContent = err.message;
+    $("#pairCode").select();
+  } finally { $("#pairBtn").disabled = false; }
+}
+
+// ---------------------------------------------------------------- phone access dialog (on the computer)
+let remoteTimer = null;
+function renderRemote(v) {
+  $("#rState").textContent = v.on ? "on" : "off";
+  $("#rToggle").textContent = v.on ? "Turn off" : "Turn on";
+  $("#rErr").textContent = v.error || "";
+  $("#rOn").classList.toggle("hidden", !v.on);
+  $("#rUrls").innerHTML = (v.urls || []).map((u) => `<div>${esc(u)}</div>`).join("") || `<div class="muted">port ${v.port}</div>`;
+  $("#rCode").textContent = v.code ? `${v.code.slice(0, 3)} ${v.code.slice(3)}` : "—";
+  $("#rDevs").innerHTML = (v.devices || []).map((d) =>
+    `<div><span><b>${esc(d.name)}</b> <span class="muted">paired ${esc(d.paired)} · last seen ${esc(d.last_seen)}</span></span>` +
+    `<button data-id="${esc(d.id)}" title="Forget this device">Forget</button></div>`).join("") ||
+    `<div class="muted">None yet.</div>`;
+  $("#rForgetAll").disabled = !(v.devices || []).length;
+}
+async function refreshRemote() {
+  try { renderRemote(await api("GET", "/api/remote")); } catch (e) { $("#rErr").textContent = e.message; }
+}
+function openRemote() {
+  $("#remoteDlg").showModal();
+  refreshRemote();
+  clearInterval(remoteTimer); remoteTimer = setInterval(refreshRemote, 1000);
 }
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -302,6 +370,8 @@ function wire() {
       `Saved ${axes.map((a) => a.toUpperCase()).join("")} → ${name}`);
   }));
   $("#ptBody").addEventListener("click", (e) => {
+    const cell = e.target.closest("td.v[title]");
+    if (cell) return toast(cell.title);          // touch screens have no hover
     const b = e.target.closest("button"); if (!b) return;
     const name = b.dataset.name;
     if (b.classList.contains("go")) {
@@ -324,8 +394,26 @@ function wire() {
     const sr = localStorage.getItem("cc.spinRpm"); if (sr) $("#spinRpm").value = sr;
   } catch (_) { setStep(1); }
   $("#gotoMode").addEventListener("change", (e) => { try { localStorage.setItem("cc.gotoMode", e.target.value); } catch (_) {} });
+
+  $("#pairForm").addEventListener("submit", submitPair);
+  $("#btnRemote").addEventListener("click", openRemote);
+  $("#rClose").addEventListener("click", () => $("#remoteDlg").close());
+  $("#remoteDlg").addEventListener("close", () => clearInterval(remoteTimer));
+  $("#rToggle").addEventListener("click", async () => {
+    const on = $("#rState").textContent !== "on";
+    try { renderRemote(await api("POST", "/api/remote", { on })); }
+    catch (e) { $("#rErr").textContent = e.message; refreshRemote(); }
+  });
+  $("#rForgetAll").addEventListener("click", () => {
+    if (confirm("Forget every paired phone and tablet? Each one needs a new code to connect again."))
+      act(async () => renderRemote(await api("POST", "/api/remote/forget", {})), "All devices forgotten");
+  });
+  $("#rDevs").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-id]"); if (!b) return;
+    act(async () => renderRemote(await api("POST", "/api/remote/forget", { id: b.dataset.id })), "Device forgotten");
+  });
 }
 
 wire();
-refreshPoints();
+refreshPoints().catch(() => {});
 poll();
