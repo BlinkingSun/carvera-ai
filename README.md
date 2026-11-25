@@ -33,6 +33,20 @@ ask it to, through the same server. Every action is logged with its source (`ui`
 
 ---
 
+## Featured: a new spoilboard, made from one conversation
+
+[![A new 1/4" PVC spoilboard on a Makera Carvera C1, pushed into the anchor corner, with 46 bolt holes and 2 dowel holes cut by Carvera AI](machines/makera-carvera-c1/spoilboard/spoilboard-photo.jpg)](machines/makera-carvera-c1/spoilboard/)
+
+**[How to build this spoilboard →](machines/makera-carvera-c1/spoilboard/)**
+
+A 335 × 225 mm sheet of 1/4" PVC laid over the stock bed and pushed into the anchor 1 corner. The agent
+lined the holes up with Makera's bed pattern from Makera's CAD, added two dowel holes for locating
+fixtures, routed the tool around the anchor block, and cut all 48 holes in 11 minutes. The folder has
+the drawing, the ready-to-run program, a generator for other sheet thicknesses and hole sizes, and a
+prompt to paste into your agent.
+
+---
+
 ## What an agent can do with it
 
 Working examples from the reference machine, all driven by conversation:
@@ -48,7 +62,8 @@ Working examples from the reference machine, all driven by conversation:
 - **"Index off these edges."** You touch off with the cutting tool and save points in the UI. The agent
   turns those tool-centre touch-offs into an X/Y shift for the CAM program and verifies the mapping.
 - **"Make me a new spoilboard."** The agent generated every hole of Makera's stock bed pattern from
-  Makera's CAD, routed around the anchor block, wrote the program and the drawing, and cut it.
+  Makera's CAD, routed around the anchor block, wrote the program and the drawing, and cut it
+  ([files and how-to](machines/makera-carvera-c1/spoilboard/)).
 - **"Turn the vacuum on" / "start the spindle at 12000."** Switches with read-back confirmation from the
   machine.
 

@@ -4,6 +4,8 @@ A replacement spoilboard laid on top of the original Makera bed, with every bolt
 bed pattern bored through it so clamps and screws still reach the bed, plus two dowel holes for
 locating fixtures. First made and verified on the reference machine (1/4" PVC, 11-minute cut).
 
+![The finished spoilboard on the reference machine, pushed into the anchor 1 corner](spoilboard-photo.jpg)
+
 ![Hole layout](Spoilboard%20Holes%20Carvera%20-%20layout.png)
 
 ## The spoilboard
@@ -36,6 +38,7 @@ nothing travels over the anchor 1 block at any height. Both rules are in `site-r
 | `Spoilboard drawing.pdf` | A3 drawing: size, thickness, dowel locations and diameter, section through a dowel, the dowel rule. |
 | `Spoilboard Holes Carvera.cnc` | The program: 48 holes, about 11 minutes, onboard vacuum on. |
 | `Spoilboard Holes Carvera - layout.png` | Hole map seen from the front, with the tool route, the anchor keep-out, the dowel no-go zones and the Z0 probe point. |
+| `spoilboard-photo.jpg` | The finished spoilboard on the reference machine. |
 
 The generators are `tools/spoilboard_holes.py` (program) and `tools/spoilboard_drawing.py` (drawing,
 needs matplotlib).
