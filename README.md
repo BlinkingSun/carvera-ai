@@ -1,5 +1,12 @@
 # Carvera AI
 
+<p align="center">
+  <a href="https://makerinparadise.com/blog/carvera-ai/"><img src="docs/assets/makerinparadise-banner.jpg" alt="Maker in Paradise — Carvera AI: running a CNC from a conversation" width="100%"></a>
+</p>
+<p align="center">
+  <strong><a href="https://makerinparadise.com/blog/carvera-ai/">Running a CNC from a conversation</a> — https://makerinparadise.com/blog/carvera-ai/</strong>
+</p>
+
 **Run a Makera Carvera CNC from a plain-text conversation with an AI agent.**
 
 Carvera AI is three things in one repository:
