@@ -1,0 +1,7 @@
+- DOWELS: the tool NEVER goes below spoilboard Z0 within R5 of dowel A X82.5 Y126 / dowel B X171 Y37.5
+  (holes Ø4.1 for 4 mm dowels, measured from the spoilboard's front-left corner = G54 0,0).
+  Only exception: "Spoilboard Holes Carvera.cnc", which cuts those holes. Check every program, probe, grid and jog.
+- ANCHOR 1: nothing travels over it at any height, and no probing there (work X-15..85 x Y-15..0 and
+  X-15..0 x Y-15..85). Never start a tool change while parked over it.
+- Spoilboard: 335 x 225 x 6.35 PVC; on the reference machine its top is machine Z-103.12 (probe as length reference).
+(These are the reference setup's rules. Edit this file for your machine; carvera-open prints it every session.)

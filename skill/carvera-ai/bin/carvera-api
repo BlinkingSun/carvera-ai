@@ -1,0 +1,18 @@
+#!/bin/zsh
+# carvera-api: call the Carvera Control HTTP API as Claude (logged as source "mcp").
+#   carvera-api GET  /api/status
+#   carvera-api POST /api/jog '{"axis":"x","distance":-1,"feed":300}'
+# POSTs wait for the machine job to finish (adds ?wait=1). Exit 1 on HTTP error.
+set -e
+METHOD=${1:?method}; P=${2:?path}; BODY=${3:-}
+PORT=${CARVERA_PORT:-17916}
+URL="http://127.0.0.1:$PORT$P"
+if [[ $METHOD == POST && $P != *"?"* && $P != /api/points && $P != /api/stop && $P != /api/hold && $P != /api/resume && $P != /api/connect && $P != /api/disconnect ]]; then
+  URL="$URL?wait=1"
+fi
+args=(-sS -X "$METHOD" -H "X-Source: mcp" -H "Content-Type: application/json" -w '\n%{http_code}')
+[[ -n $BODY ]] && args+=(-d "$BODY")
+OUT=$(curl "${args[@]}" "$URL")
+CODE=${OUT##*$'\n'}
+echo "${OUT%$'\n'*}" | python3 -m json.tool 2>/dev/null || echo "${OUT%$'\n'*}"
+[[ $CODE == 2* ]] || { echo "HTTP $CODE" >&2; exit 1; }

@@ -1,0 +1,15 @@
+# runtime data: your machine's config (IP), activity log, saved points, server log
+data/
+__pycache__/
+*.pyc
+.DS_Store
+*.log
+*.part
+# Makera's models are downloaded by fetch_makera_models.sh, never committed (no license to redistribute)
+machines/makera-carvera-c1/3d-model/*.step
+machines/makera-carvera-c1/3d-model/*.STEP
+machines/makera-carvera-c1/3d-model/*.f3d
+machines/makera-carvera-c1/3d-model/*.f3z
+machines/makera-carvera-c1/3d-model/*.dxf
+# drawing previews
+*_preview.png

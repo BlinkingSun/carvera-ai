@@ -1,0 +1,113 @@
+#!/bin/zsh
+# carvera-open: start Carvera Control (if needed), connect to the Carvera, open the web UI, and print the
+# machine context (status, offsets, site rules, saved points, recent activity) for the agent to read.
+#   carvera-open [--no-ui] [--no-connect] [--json]
+# Exit: 0 ok | 2 server would not start | 3 machine held by another controller | 4 machine unreachable
+# The project folder is $CARVERA_CONTROL_HOME, or the repository this script lives in (symlinks resolved).
+PROJECT="${CARVERA_CONTROL_HOME:-${0:A:h:h:h:h}}"
+PY="${CARVERA_PYTHON:-python3}"
+exec "$PY" -I - "$PROJECT" "$@" <<'PYEOF'
+import json, os, subprocess, sys, time, urllib.error, urllib.request, webbrowser
+
+project, args = sys.argv[1], sys.argv[2:]
+PORT = int(os.environ.get("CARVERA_PORT", "17916"))
+BASE = f"http://127.0.0.1:{PORT}"
+want_ui, want_connect, as_json = "--no-ui" not in args, "--no-connect" not in args, "--json" in args
+
+def call(method, path, body=None, timeout=30):
+    req = urllib.request.Request(BASE + path, method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json", "X-Source": "mcp"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read() or b"{}", strict=False)
+    except urllib.error.HTTPError as e:
+        try:
+            return json.loads(e.read() or b"{}", strict=False) | {"_http": e.code}
+        except ValueError:
+            return {"error": f"HTTP {e.code}", "_http": e.code}
+
+def up():
+    try:
+        urllib.request.urlopen(BASE + "/api/status", timeout=1).read(); return True
+    except Exception:
+        return False
+
+if not os.path.isdir(os.path.join(project, "carvera_control")):
+    print(f"Carvera Control not found in {project}; set CARVERA_CONTROL_HOME to the carvera-ai folder"); sys.exit(2)
+started = False
+if not up():
+    os.makedirs(os.path.join(project, "data"), exist_ok=True)
+    log = open(os.path.join(project, "data", "server.log"), "a")
+    subprocess.Popen([sys.executable, "-m", "carvera_control", "--port", str(PORT)], cwd=project,
+                     stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(50):
+        time.sleep(0.1)
+        if up():
+            started = True; break
+    if not started:
+        print(f"Carvera Control server did not start; see {project}/data/server.log"); sys.exit(2)
+
+code, note = 0, None
+s = call("GET", "/api/status")
+if want_connect and not s.get("connected"):
+    r = call("POST", "/api/connect", {})
+    if r.get("error"):
+        err = r["error"]
+        code = 3 if "another controller" in err else 4
+        note = err
+    s = call("GET", "/api/status")
+if want_ui:
+    webbrowser.open(BASE + "/")
+pts = call("GET", "/api/points").get("points", [])
+acts = call("GET", "/api/activity?limit=15").get("items", [])
+rules_path = os.path.join(project, "site-rules.txt")
+rules = open(rules_path, encoding="utf-8").read().strip() if os.path.exists(rules_path) else ""
+
+if as_json:
+    print(json.dumps({"base": BASE, "server_started": started, "status": s, "site_rules": rules, "points": pts,
+                      "activity": acts, "note": note, "exit": code}, default=str, indent=1)); sys.exit(code)
+
+f = lambda v, d=3: "—" if v is None else f"{v:.{d}f}"
+xyz = lambda p, d=3: "—" if not p else f"X {f(p.get('x'), d)}  Y {f(p.get('y'), d)}  Z {f(p.get('z'), d)}"
+st, off, info = s.get("status") or {}, s.get("offsets") or {}, s.get("info") or {}
+print(f"CARVERA CONTROL  {BASE}  (server {'started now' if started else 'already running'}; UI {'opened' if want_ui else 'not opened'})")
+conn = "CONNECTED" if s.get("connected") else "NOT CONNECTED"
+print(f"Machine: {info.get('name', 'Carvera')} {s.get('host') or '(auto-discover)'}:{s.get('port')}  fw {info.get('version', '?')}  {conn}"
+      + (f"  state {st.get('state')}" if s.get("connected") else ""))
+if note:
+    print(f"!! connect: {note}")
+if s.get("connected"):
+    print(f"Tool: {s.get('tool_name')}  TLO {f(st.get('tlo'))}   Probe battery {f(st.get('probe_v'), 2)} V   Spindle {f(st.get('spindle_rpm'), 0)} rpm")
+    print(f"Machine pos: {xyz(st.get('mpos'))}")
+    print(f"Work pos   : {xyz(st.get('wpos'))}   ({(s.get('modal') or '').split(' ')[1] if s.get('modal') else 'G54'})")
+    print(f"G54 offset : {xyz(off.get('G54'), 4)}")
+    prb = off.get("PRB")
+    if prb:
+        print(f"Last probe : machine Z {f(prb['z'], 4)} at X {f(prb['x'])} Y {f(prb['y'])} ({'hit' if prb['hit'] else 'miss'})")
+    print(f"Modal      : {s.get('modal')}")
+    j = s.get("job")
+    if j:
+        print(f"Last job   : {j['kind']} ({j['source']}) {j['state']}" + (f" — {j['error']}" if j.get("error") else ""))
+if rules:
+    print("\nSITE RULES (never break; from site-rules.txt):")
+    for line in rules.splitlines():
+        print("  " + line)
+print(f"\nSaved points ({len(pts)}):")
+for p in pts:
+    parts = []
+    for a in ("x", "y", "z"):
+        c = p["axes"].get(a)
+        if c:
+            parts.append(f"{a.upper()} m {f(c['machine'])} / w {f(c['work'])} [T{c['tool']}]")
+    print(f"  • {p['name']}: " + "  |  ".join(parts) + (f"\n      note: {p['note']}" if p.get("note") else ""))
+if not pts:
+    print("  (none)")
+print(f"\nRecent activity (last {len(acts)}, oldest first):")
+for a in acts:
+    d = a.get("detail") or {}
+    if isinstance(d, dict):
+        d = d.get("error") or d.get("params") or d.get("values") or {k: v for k, v in d.items() if k not in ("job", "result")}
+    print(f"  {a['time']} {a['source']:6s} {a['action']}  {json.dumps(d, default=str)[:140] if d else ''}")
+sys.exit(code)
+PYEOF
